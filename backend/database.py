@@ -22,10 +22,20 @@ DB_PASSWORD = os.getenv("DB_PASSWORD")
 if not DB_PASSWORD:
     raise RuntimeError("DB_PASSWORD is missing from backend/.env")
 
-DATABASE_URL = (
-    f"mysql+pymysql://{quote_plus(DB_USER)}:"
-    f"{quote_plus(DB_PASSWORD)}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-)
+DB_SOCKET = os.getenv("DB_SOCKET")
+
+if DB_SOCKET:
+    # Cloud Run + Cloud SQL: connect through the unix socket
+    DATABASE_URL = (
+        f"mysql+pymysql://{quote_plus(DB_USER)}:"
+        f"{quote_plus(DB_PASSWORD)}@/{DB_NAME}?unix_socket={DB_SOCKET}"
+    )
+else:
+    # Local development: connect over host and port
+    DATABASE_URL = (
+        f"mysql+pymysql://{quote_plus(DB_USER)}:"
+        f"{quote_plus(DB_PASSWORD)}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+    )
 
 engine = create_engine(
     DATABASE_URL,
