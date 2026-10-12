@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from datetime import datetime
+import mimetypes
 import os
 import re
 import secrets
@@ -16,6 +17,7 @@ from fastapi import (
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -46,6 +48,20 @@ from schemas import (
 UPLOAD_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "uploads"))
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+# Cloud Storage (used on Cloud Run). If GCS_BUCKET is not set, files are saved locally.
+GCS_BUCKET = os.getenv("GCS_BUCKET")
+_gcs_bucket = None
+
+
+def get_gcs_bucket():
+    global _gcs_bucket
+    if _gcs_bucket is None:
+        from google.cloud import storage
+
+        _gcs_bucket = storage.Client().bucket(GCS_BUCKET)
+    return _gcs_bucket
+
+
 MAX_IMAGE_SIZE_BYTES = 2 * 1024 * 1024  # 2MB limit
 ALLOWED_MIME_TYPES = {
     "image/jpeg": ".jpg",
@@ -75,7 +91,29 @@ app = FastAPI(
 )
 
 # Static file serving for uploaded item photos
-app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+@app.get("/uploads/{filename}")
+def get_uploaded_image(filename: str):
+    # Only plain, safe filenames are allowed
+    if not re.fullmatch(r"[A-Za-z0-9_\-]+\.(jpg|png|webp|gif)", filename):
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+
+    if GCS_BUCKET:
+        try:
+            data = get_gcs_bucket().blob(f"uploads/{filename}").download_as_bytes()
+        except Exception:
+            raise HTTPException(status_code=404, detail="Image not found")
+        return Response(
+            content=data,
+            media_type=media_type,
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+
+    path = os.path.join(UPLOAD_DIR, filename)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(path, media_type=media_type)
 
 app.add_middleware(
     CORSMiddleware,
@@ -335,15 +373,28 @@ async def upload_image(
     safe_name = f"{secrets.token_hex(16)}_{int(time.time())}{ext}"
     dest_path = os.path.abspath(os.path.join(UPLOAD_DIR, safe_name))
 
-    # Path traversal check: guarantee file resides within UPLOAD_DIR
-    if os.path.commonpath([UPLOAD_DIR, dest_path]) != UPLOAD_DIR:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Illegal file destination path.",
-        )
+    if GCS_BUCKET:
+        try:
+            blob = get_gcs_bucket().blob(f"uploads/{safe_name}")
+            blob.upload_from_string(total_bytes, content_type=content_type)
+        except Exception as exc:
+            print(f"ERROR: could not upload to Cloud Storage: {exc}")
+            raise HTTPException(
+                status_code=500,
+                detail="Could not store the image. Please try again.",
+            )
+    else:
+        dest_path = os.path.abspath(os.path.join(UPLOAD_DIR, safe_name))
 
-    with open(dest_path, "wb") as f:
-        f.write(total_bytes)
+        # Path traversal check: guarantee file resides within UPLOAD_DIR
+        if os.path.commonpath([UPLOAD_DIR, dest_path]) != UPLOAD_DIR:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Illegal file destination path.",
+            )
+
+        with open(dest_path, "wb") as f:
+            f.write(total_bytes)
 
     return {
         "url": f"/uploads/{safe_name}",
