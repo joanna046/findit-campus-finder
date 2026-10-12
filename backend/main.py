@@ -58,7 +58,12 @@ ALLOWED_MIME_TYPES = {
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Tables are non-destructively maintained
+    # Create any missing tables (safe to run on every start)
+    try:
+        Base.metadata.create_all(bind=engine)
+        print("Database tables are ready.")
+    except Exception as exc:
+        print(f"WARNING: could not create database tables: {exc}")
     yield
 
 
