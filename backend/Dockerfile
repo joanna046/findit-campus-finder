@@ -5,7 +5,7 @@ WORKDIR /app
 
 COPY . .
 
-RUN pip install --no-cache-dir fastapi uvicorn sqlalchemy pymysql python-dotenv python-multipart passlib[bcrypt] python-jose[cryptography] email-validator
+RUN pip install --no-cache-dir fastapi uvicorn sqlalchemy pymysql python-dotenv python-multipart bcrypt PyJWT email-validator
 
 ENV PYTHONUNBUFFERED=1
 
