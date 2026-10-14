@@ -1,54 +1,202 @@
-# Findit Campus Finder
+# FindIt: Smart Lost-and-Found Management System
 
-Build a modern, responsive web application called FindIt — Smart Lost & Found Portal, designed initially for a college campus.
+A campus web application that brings lost-item reporting, discovery, ownership claims and administrator review into one traceable workflow. Built with **React**, **FastAPI** and **MySQL**, and deployed on **Google Cloud**.
 
-Use React, Vite, TypeScript, Tailwind CSS, and reusable components.
+**Live site:** https://findit-frontend-71315479004.asia-south1.run.app
+**API:** https://findit-backend-71315479004.asia-south1.run.app
+**API docs (Swagger):** https://findit-backend-71315479004.asia-south1.run.app/docs
+**Health check:** https://findit-backend-71315479004.asia-south1.run.app/api/health
 
-Design style: Clean, premium, minimal interface with a light background, deep navy text, teal accents, rounded cards, subtle shadows, and excellent responsive design. Make it look like a real production-ready product, not a generic student project.
+---
 
-Pages and features:
+## The Problem
 
-Home dashboard: A welcome section, search bar, statistics for lost items, found items, and successfully returned items, plus recently reported items.
+Campus lost-and-found is fragmented. Reports are scattered across WhatsApp groups, noticeboards and informal records. Students have no searchable, photo-supported place to publish or find items, and verifying ownership is difficult when claims, evidence and decisions are not tracked together. There is little visibility and no audit trail.
 
-Browse items: A responsive grid of item cards showing photos, item names, category, location, date, and LOST or FOUND status.
+## The Solution
 
-Search and filters: Search by item name or description, filter by category, location, and status, and sort by most recent.
+FindIt turns the process into one traceable service:
 
-Report an item: A form to report a lost or found item, with title, description, category, location, date, and optional image.
+| Step | What happens |
+|------|--------------|
+| **Report** | A registered user submits a lost or found item with details and an optional photo. |
+| **Discover** | Users search and browse listings. |
+| **Claim** | A user submits a written proof-of-ownership claim and follows its status in *My Reports*. |
+| **Review** | An administrator approves or rejects the claim, and the decision is recorded. |
 
-Item details: A dedicated view with item information and a button to submit a claim.
+---
 
-My reports: A dashboard for users to view their reports and claim statuses.
+## Features
 
-Admin dashboard: A simple interface to review reports and claims and update item status.
+- User registration and login with JWT-based sessions
+- Report lost or found items with type, description, category, location, date and photo
+- Browse and search item listings with status cues
+- Submit ownership claims with a written proof message
+- *My Reports* view showing submitted items, claims and outcomes
+- Admin-only claim review (approve or reject)
+- Private photo storage in Google Cloud Storage
+- Automated build and deploy pipeline
 
-Include realistic sample data for college items such as ID cards, wallets, backpacks, keys, water bottles, and earphones.
+---
 
-Use working client-side search, sorting, filtering, form validation, and navigation. Make all interactive controls functional with sample data initially.
+## Architecture
 
-Keep the frontend separate from the backend. Do not require Supabase or another hosted backend. Organize the code so it can later connect to a custom Spring Boot REST API and MySQL database.
+```
+Browser
+   │
+   ▼
+React frontend (Cloud Run: findit-frontend)
+   │  API calls
+   ▼
+FastAPI backend (Cloud Run: findit-backend) ──► Cloud Storage (private photo bucket)
+   │  SQL
+   ▼
+MySQL 8.4 on Cloud SQL (findit-db)
+```
 
-Create a polished, fully responsive website with a consistent design system.
+All services run in **asia-south1 (Mumbai)**.
 
-This project was built with [Lovable](https://lovable.dev).
+- The browser talks only to the frontend and the API.
+- Photos are uploaded **through the backend** (never directly from the browser) into a private Cloud Storage bucket. Only an `image_key` reference is stored in MySQL.
+- Cloud Run containers are stateless. Cloud SQL and Cloud Storage hold all state.
 
-**Live app**: https://findit-campus-finder.lovable.app
+### CI/CD
 
-## Build with Lovable
+```
+GitHub → Cloud Build → Artifact Registry → Cloud Run
+```
 
-Continue developing this project in the [Lovable editor](https://lovable.dev/projects/73c92223-8f47-420b-bce9-676973fd3ace).
+Every push to `main` triggers Cloud Build, which builds the container image, pushes it to Artifact Registry and deploys it to Cloud Run. After each deploy, `/api/health` and `/docs` are used to confirm the new revision is serving.
 
-- **Ship faster**: describe what you want to build and Lovable handles the code.
-- **Stay in sync**: every change made in Lovable is committed straight to this repository.
-- **Full ownership**: this code is yours. Push to `main` on GitHub and your changes sync back into Lovable, ready for your next prompt.
+### Cloud service models
 
-## Development
+- **IaaS:** Cloud Storage (object storage). No virtual machines are provisioned.
+- **PaaS:** Cloud Run, Cloud SQL, Cloud Build, Artifact Registry
+- **SaaS:** GitHub
 
-Prefer working locally? You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).
+---
 
-```sh
-git clone <this-repository-url>
-cd <repository-name>
-npm i
+## Tech Stack
+
+| Layer | Technologies |
+|-------|--------------|
+| Frontend | React, Vite, TypeScript, Tailwind CSS, TanStack Start |
+| Backend | Python 3.12, FastAPI, Pydantic, SQLAlchemy, PyMySQL, PyJWT, bcrypt |
+| Database | MySQL 8.4 (Cloud SQL) |
+| Storage | Google Cloud Storage |
+| Runtime | Google Cloud Run |
+| Delivery | GitHub, Cloud Build, Artifact Registry |
+
+---
+
+## Data Model
+
+Three core tables:
+
+- **users**: `id`, `name`, `email`, `password_hash`, `role`, `is_active`, `created_at`
+- **items**: `id`, `title`, `description`, `category`, `report_type`, `location`, `item_date`, `image_key`, `status`, `user_id`, `created_at`
+- **claims**: `id`, `item_id`, `claimant_id`, `claim_message`, `claim_status`, `created_at`
+
+One user reports many items and submits many claims. One item can receive many claims.
+
+---
+
+## Security
+
+- **Authentication:** signed JWTs with a 7-day expiry
+- **Password storage:** bcrypt hashes (12 rounds) only, never plain text
+- **Authorization:** `student` and `admin` roles enforced on protected routes; only admins can approve or reject claims
+- **Upload validation:** file type and file header are checked, with a 2 MB limit
+- **Secrets:** the JWT secret and database password are set as Cloud Run environment variables, not stored in source code
+- **Storage:** the Cloud Storage bucket is private (public access blocked)
+- **CORS:** the API allow-list admits only the frontend and local development
+
+---
+
+## Testing and Evaluation
+
+| Function | Local | Live (Cloud) |
+|----------|-------|--------------|
+| Registration | Passed | HTTP 201 from `POST /api/auth/register` |
+| Login (JWT issued) | Passed | Admin login works |
+| Report item with photo | Passed | Photo stored in Cloud Storage and served |
+| Browse and search | Passed | Reported item appears in Browse |
+| Submit claim | Passed | Live-site run pending |
+| Admin approve / reject | Passed | Live-site run pending |
+| API verification | Passed | `/api/health` healthy; `/docs` lists 16 endpoints |
+
+**Limitations:** the pipeline has no automated test step (post-deploy checks are manual), and no load testing has been performed.
+
+---
+
+## Deployment Details
+
+- **Cloud Run:** request-based billing, 80 concurrent requests per instance, 300 s request timeout, startup CPU boost enabled; the backend autoscales up to 20 instances
+- **Cloud SQL:** MySQL 8.4.11, Enterprise edition, 2 vCPU, 8 GB RAM, 10 GB SSD, single zone
+- **Cloud Build:** about 2 min 35 s to 2 min 53 s per backend build
+- **Cost note:** Cloud SQL is the main cost driver (estimated at about ₹8,000 per month if always on)
+
+---
+
+## Running Locally
+
+> Adjust folder names and commands to match your repository layout.
+
+```bash
+# Clone
+git clone https://github.com/joanna046/findit-campus-finder.git
+cd findit-campus-finder
+```
+
+**Backend**
+
+```bash
+cd backend
+python -m venv venv
+source venv/bin/activate        # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn main:app --reload
+```
+
+**Frontend**
+
+```bash
+cd frontend
+npm install
 npm run dev
 ```
+
+**Environment variables** (backend), set locally or in Cloud Run:
+
+| Variable | Purpose |
+|----------|---------|
+| `JWT_SECRET` | Secret used to sign JWTs |
+| `DB_NAME` / `DB_USER` / `DB_PASSWORD` | MySQL credentials |
+| `DB_HOST` or Cloud SQL socket | Database connection |
+| `BUCKET_NAME` | Cloud Storage bucket for photos |
+
+Never commit real secrets to the repository.
+
+---
+
+## Challenges Solved
+
+- A missing PyJWT dependency, fixed by adding it to the container image
+- Startup secrets, fixed by setting them as Cloud Run environment variables
+- Cloud Run to Cloud SQL connectivity, fixed with the Cloud SQL connector
+- Persistent photo storage, fixed by moving photos to Cloud Storage
+
+## Future Work
+
+- Monitoring and alerting
+- Automated database backups
+- High availability for Cloud SQL
+- Secret Manager for credentials
+- Custom domain
+- Automated tests in the CI/CD pipeline
+
+
+
+
+
+Joanna· College project · Google Cloud
